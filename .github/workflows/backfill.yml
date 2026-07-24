@@ -1,0 +1,43 @@
+name: GOES backfill
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "start date YYYY-MM-DD"
+        default: "2022-10-01"
+      end:
+        description: "end date YYYY-MM-DD"
+        default: "2023-12-31"
+  schedule:
+    - cron: "41 */6 * * *"   # 6시간 릴레이 (GEFS collector와 어긋난 41분 오프셋)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goes-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --quiet requests numpy xarray netcdf4
+      - name: Git identity
+        run: |
+          git config user.name "goes-collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+      - name: Collect
+        run: python collect.py --start "${{ inputs.start || '2022-10-01' }}" --end "${{ inputs.end || '2023-12-31' }}" --workers 12 --budget-min 320 --commit-every-min 20
+      - name: Final flush (에러로 죽어도 받은 만큼 커밋)
+        if: always()
+        run: |
+          git add data/ || true
+          git commit -m "backfill final flush" || echo "no changes"
+          for i in 1 2 3 4 5; do git push && break || git pull --rebase; sleep 5; done
