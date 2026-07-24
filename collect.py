@@ -5,9 +5,13 @@ file_key 중복 스킵 = 재개형. 예산(분) 소진 시 정상 종료 → cro
 출처: NOAA GOES-16/19 ABI L2 ACMF (AWS Open Data / GCS 미러, 익명).
 로컬 기상수치모델/구름/scripts/collect_goes_labels.py와 동일 추출 경로 (반경 10/20/50km BCM 원판평균).
 """
-import argparse, csv, math, os, re, subprocess, sys, tempfile, time
+import argparse, csv, math, os, re, subprocess, sys, tempfile, threading, time
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# netCDF4/HDF5는 스레드 안전하지 않음 — 동시 open 시 세그폴트(exit 139) 실증됨.
+# 다운로드만 병렬, 추출(nc open)은 이 락으로 직렬화.
+NC_LOCK = threading.Lock()
 
 import numpy as np
 import requests
@@ -137,7 +141,8 @@ def process_one(args):
     local = os.path.join(tmpdir, f"cur_{idx}.nc")
     try:
         download(bucket, key, local)
-        row = extract(local)
+        with NC_LOCK:
+            row = extract(local)
         row["file_key"] = key
         return row
     except Exception as e:
